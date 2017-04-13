@@ -4,13 +4,29 @@ Param
     [int]$MachineId = 1,
     [string]$ResourceGroupName = "hcLAB",
     [string]$subscriptionId = "82ced291-8a55-46ca-86d4-064c97268779",
-    [string]$commonPrefix = "hclab"
+    [string]$commonPrefix = "hclab",
+    [switch]$CustomAdminPassword,
+    [switch]$ssd
 )
 
 Begin
 {
 
     $paramterFile = [System.IO.Path]::GetTempFileName()
+
+    $storageAccountType = "Standard_LRS"
+    if ($ssd)
+    {
+        # tell Azure to use an SSD for the OS disk, this is called Premium
+        # but it is more expensive.
+        $storageAccountType = "Premium_LRS"  
+    }
+
+    Function AskForPassword()
+    {
+        $ph = Read-Host "Type the admin password to use" -AsSecureString
+        return [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($ph))  
+    }
 
     Function CreateParametersFile([string]$id)
     {
@@ -42,7 +58,7 @@ Begin
             "value": "$commonPrefix$id-nsg"
         },
         "adminPassword": {
-            "value": "vGyDgWUIf9a2g1j5BkaH"
+            "value": "$adminPassword"
         },
         "storageAccountName": {
             "value": "$($commonPrefix)diskslab$id"
@@ -54,7 +70,7 @@ Begin
             "value": "$($commonPrefix)diaglab$id"
         },
         "diagnosticsStorageAccountType": {
-            "value": "Standard_LRS"
+            "value": "$storageAccountType"
         },
         "diagnosticsStorageAccountId": {
             "value": "Microsoft.Storage/storageAccounts/$($commonPrefix)diaglab$id"
@@ -83,7 +99,9 @@ Begin
 
     Function New-AzureLabVM()
     {
-        .\New-AzVM.ps1 -subscriptionId $subscriptionId -resourceGroupName $ResourceGroupName -deploymentName "Deploy$MachineId" -templateFilePath .\template.json -parametersFilePath $paramterFile
+        if ($pscmdlet.ShouldProcess($ResourceGroupName,"Create-VM $commonPrefix$MachineId")){ 
+            .\New-AzVM.ps1 -subscriptionId $subscriptionId -resourceGroupName $ResourceGroupName -deploymentName "Deploy$MachineId" -templateFilePath .\template.json -parametersFilePath $paramterFile
+        }
     }
 }
 
@@ -97,6 +115,21 @@ Process
         Write-Warning "You are not logged into Azure, run Add-AzureRmAccount and then start this script again"
         Exit       
       }
+    }
+
+    if ($CustomAdminPassword)
+    {
+        $adminPassword = AskForPassword
+    }
+    else
+    {
+        # we get the password from our credential store
+        $adminPassword = Get-SecretText.ps1 -name "hc:azureLabPassword"
+
+        if ($adminPassword -eq $null)
+        {  
+            $adminPassword = AskForPassword
+        }    
     }
 
     CreateParametersFile -id $MachineId
